@@ -12,7 +12,7 @@ import torch.nn as nn
 
 from src.models.encoder_transformer import TransformerEncoder
 from src.models.decoder_spade import SPADEDecoder
-from src.models.ops import annealed_mean, ABColorQuantizer
+from src.models.ops import decode_distribution_to_ab
 
 logger = logging.getLogger(__name__)
 
@@ -98,11 +98,8 @@ class ModernColorizer(nn.Module):
             use_checkpointing=use_checkpointing,
         )
         
-        # Quantizer for classification mode
-        if mode == "classification":
-            self.quantizer = ABColorQuantizer()
-        else:
-            self.quantizer = None
+        # Quantizer for classification mode (not needed - ops already has decode function)
+        self.quantizer = None
         
         logger.info(f"Model built successfully")
         logger.info(f"  Encoder channels: {encoder_channels}")
@@ -139,8 +136,8 @@ class ModernColorizer(nn.Module):
             # Classification: output is logits [B, Q, H, W]
             logits = output
             
-            # Convert to ab using annealed-mean
-            ab = annealed_mean(logits, T=temperature)
+            # Convert to ab using annealed-mean (decode_distribution_to_ab)
+            ab = decode_distribution_to_ab(logits, temperature=temperature)
             
             result["ab"] = ab
             if return_logits:

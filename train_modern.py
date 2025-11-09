@@ -22,7 +22,6 @@ import numpy as np
 from src.models.modern_colorizer import ModernColorizer
 from src.models.loss import CombinedColorizationLoss
 from src.data.dataset import ColorizationDataset
-from src.models.ops import ABColorQuantizer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -93,11 +92,8 @@ class ModernColorizationTrainer:
         self.global_step = 0
         self.best_val_loss = float('inf')
         
-        # Quantizer for classification mode
-        if config['mode'] == 'classification':
-            self.quantizer = ABColorQuantizer()
-        else:
-            self.quantizer = None
+        # Quantizer for classification mode (handled in model)
+        self.quantizer = None
         
         logger.info("Trainer initialized:")
         logger.info(f"  Device: {device}")

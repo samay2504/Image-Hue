@@ -264,9 +264,9 @@ class CombinedColorizationLoss(nn.Module):
             main_loss = ce_loss
             
             # For perceptual loss, need to convert logits to ab
-            # Use annealed_mean (requires import from ops.py)
-            from src.models.ops import annealed_mean
-            pred_ab = annealed_mean(pred_logits_or_ab, T=0.38)
+            # Use decode_distribution_to_ab (annealed_mean)
+            from src.models.ops import decode_distribution_to_ab
+            pred_ab = decode_distribution_to_ab(pred_logits_or_ab, temperature=0.38)
         
         else:
             # L1 regression loss
