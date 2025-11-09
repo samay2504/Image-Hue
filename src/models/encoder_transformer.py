@@ -48,16 +48,50 @@ class TransformerEncoder(nn.Module):
         """
         super().__init__()
 
-        if not pretrained:
-            raise NotImplementedError("Random initialization not supported yet")
-
-        # Load transformer model
-        logger.info(f"Loading transformer encoder (size={size})")
-        self.model, self.metadata = load_transformer_model(
-            model_name=model_name,
-            size=size,
-            local_only=local_only,
-        )
+        # Load transformer model (pretrained or random init)
+        if pretrained:
+            logger.info(f"Loading pretrained transformer encoder (size={size})")
+            self.model, self.metadata = load_transformer_model(
+                model_name=model_name,
+                size=size,
+                local_only=local_only,
+            )
+        else:
+            logger.info(f"Initializing random transformer encoder (size={size})")
+            # For random initialization, still load the architecture but don't load pretrained weights
+            # This is useful for training from scratch or fine-tuning experiments
+            import torch
+            from transformers import AutoConfig, AutoModel
+            
+            # Define size configurations
+            size_configs = {
+                "tiny": ("google/vit-base-patch16-224", {"hidden_size": 192, "num_hidden_layers": 12}),
+                "base": ("google/vit-base-patch16-224", {"hidden_size": 768, "num_hidden_layers": 12}),
+                "swin": ("microsoft/swin-tiny-patch4-window7-224", {"hidden_size": 768, "num_hidden_layers": 12}),
+            }
+            
+            base_model_name = model_name or size_configs.get(size, size_configs["base"])[0]
+            config_overrides = size_configs.get(size, size_configs["base"])[1]
+            
+            # Load config and override
+            config = AutoConfig.from_pretrained(base_model_name, local_files_only=local_only)
+            for key, value in config_overrides.items():
+                setattr(config, key, value)
+            
+            # Initialize model with random weights
+            self.model = AutoModel.from_config(config)
+            
+            # Create metadata
+            self.metadata = {
+                "model_name": base_model_name,
+                "hidden_dim": config.hidden_size,
+                "num_blocks": config.num_hidden_layers,
+                "patch_size": getattr(config, "patch_size", 16),
+                "image_size": getattr(config, "image_size", 224),
+            }
+            
+            logger.info(f"Initialized random transformer with hidden_dim={self.metadata['hidden_dim']}, "
+                       f"num_blocks={self.metadata['num_blocks']}")
 
         # Extract model parameters
         self.hidden_dim = self.metadata["hidden_dim"]

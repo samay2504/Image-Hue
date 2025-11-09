@@ -204,23 +204,41 @@ class ColorizationInference:
         return rgb_pred
     
     def _colorize_opencv(self, img_rgb: np.ndarray) -> np.ndarray:
-        """Colorize using OpenCV color transfer (as baseline)."""
-        # Simple histogram matching from a default colored reference
-        # For a proper implementation, would need a reference image
-        # Here we'll do a simple saturation boost
+        """
+        Colorize using OpenCV-based method.
         
-        # Convert to HSV
-        img_bgr = cv2.cvtColor((img_rgb * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
-        img_hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV).astype(np.float32)
+        Uses a combination of:
+        1. Grayscale to RGB conversion using colormap
+        2. Histogram equalization for better contrast
+        3. Color tone adjustment for natural appearance
         
-        # Boost saturation (simple colorization)
-        img_hsv[:, :, 1] = np.clip(img_hsv[:, :, 1] * 1.5, 0, 255)
+        This is a baseline method that doesn't require any trained model.
+        """
+        # Convert RGB to grayscale if needed
+        if len(img_rgb.shape) == 3:
+            gray = cv2.cvtColor((img_rgb * 255).astype(np.uint8), cv2.COLOR_RGB2GRAY)
+        else:
+            gray = (img_rgb * 255).astype(np.uint8)
         
-        # Convert back
-        img_bgr = cv2.cvtColor(img_hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
-        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+        # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization) for better contrast
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        gray_enhanced = clahe.apply(gray)
         
-        return img_rgb / 255.0
+        # Apply a warm colormap (COLORMAP_AUTUMN gives natural warm tones)
+        colored_bgr = cv2.applyColorMap(gray_enhanced, cv2.COLORMAP_AUTUMN)
+        
+        # Convert to RGB
+        colored_rgb = cv2.cvtColor(colored_bgr, cv2.COLOR_BGR2RGB)
+        
+        # Blend with original grayscale to reduce oversaturation
+        # Convert grayscale to 3-channel
+        gray_rgb = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
+        
+        # Blend: 70% colored, 30% grayscale for natural appearance
+        result = cv2.addWeighted(colored_rgb, 0.7, gray_rgb, 0.3, 0)
+        
+        # Normalize to [0, 1]
+        return result.astype(np.float32) / 255.0
     
     def _inference_with_tiling(self, L_tensor: torch.Tensor, tile_size: int) -> torch.Tensor:
         """Run inference with tiling for large images."""
