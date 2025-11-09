@@ -6,14 +6,12 @@ Implements staged training with encoder freezing schedule and mixed precision.
 
 import argparse
 import logging
-import os
 from pathlib import Path
 from typing import Optional, Dict, Any
 import json
 import time
 
 import torch
-import torch.nn as nn
 from torch.cuda.amp import autocast, GradScaler
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter

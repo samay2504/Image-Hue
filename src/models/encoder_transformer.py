@@ -9,7 +9,6 @@ import logging
 from typing import List, Optional, Tuple
 import torch
 import torch.nn as nn
-from torch.utils.checkpoint import checkpoint
 
 from src.utils.hf_model_cache import load_transformer_model
 
