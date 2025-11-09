@@ -282,7 +282,7 @@ def launch_gradio_app(model_path=None, redis_url=None, share=False, server_port=
     demo.launch(
         share=share,
         server_port=server_port,
-        server_name="0.0.0.0"
+        server_name="127.0.0.1"  # Use localhost instead of 0.0.0.0
     )
 
 
@@ -291,7 +291,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, help="Model checkpoint path")
-    parser.add_argument("--redis-url", type=str, default="redis://localhost:6379", help="Redis URL")
+    parser.add_argument("--redis-url", type=str, help="Redis URL (optional, defaults to disk cache)")
     parser.add_argument("--share", action="store_true", help="Create public link")
     parser.add_argument("--port", type=int, default=7860, help="Server port")
     
@@ -299,7 +299,7 @@ if __name__ == "__main__":
     
     launch_gradio_app(
         model_path=args.model,
-        redis_url=args.redis_url,
+        redis_url=args.redis_url,  # Will be None if not provided
         share=args.share,
         server_port=args.port
     )
