@@ -10,12 +10,19 @@ Features:
 - Model info panel
 """
 
+import sys
+from pathlib import Path
+
+# Add project root to Python path for imports
+project_root = Path(__file__).parent.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
 import streamlit as st
 import numpy as np
 from PIL import Image
 import io
 import os
-from pathlib import Path
 import base64
 import time
 
@@ -101,13 +108,13 @@ def display_blend_animation(frames, fps=20):
     # Loop through frames
     for frame in frames:
         frame_img = Image.fromarray((frame * 255).astype(np.uint8))
-        animation_placeholder.image(frame_img, use_column_width=True)
+        animation_placeholder.image(frame_img, use_container_width=True)
         time.sleep(delay)
     
     # Show final frame
     animation_placeholder.image(
         Image.fromarray((frames[-1] * 255).astype(np.uint8)),
-        use_column_width=True
+        use_container_width=True
     )
 
 
@@ -213,7 +220,7 @@ def main():
             if uploaded_file:
                 img = Image.open(uploaded_file).convert('RGB')
                 st.session_state.current_image = np.array(img) / 255.0
-                st.image(img, caption="Uploaded Image", use_column_width=True)
+                st.image(img, caption="Uploaded Image", use_container_width=True)
         
         with example_tab:
             # Example images
@@ -225,7 +232,7 @@ def main():
                     if st.button("Load Example"):
                         img = Image.open(example_choice).convert('RGB')
                         st.session_state.current_image = np.array(img) / 255.0
-                        st.image(img, caption="Example Image", use_column_width=True)
+                        st.image(img, caption="Example Image", use_container_width=True)
                 else:
                     st.info("No example images found in examples/ directory")
             else:
@@ -257,7 +264,7 @@ def main():
         
         if st.session_state.colorized_result is not None:
             result_img = Image.fromarray((st.session_state.colorized_result * 255).astype(np.uint8))
-            st.image(result_img, caption="Colorized Result", use_column_width=True)
+            st.image(result_img, caption="Colorized Result", use_container_width=True)
             
             # Download button
             st.markdown(
@@ -272,9 +279,9 @@ def main():
                 # Grayscale version
                 gray = np.mean(st.session_state.current_image, axis=2, keepdims=True)
                 gray_rgb = np.repeat(gray, 3, axis=2)
-                st.image(gray_rgb, caption="Grayscale", use_column_width=True)
+                st.image(gray_rgb, caption="Grayscale", use_container_width=True)
             with compare_cols[1]:
-                st.image(result_img, caption="Colorized", use_column_width=True)
+                st.image(result_img, caption="Colorized", use_container_width=True)
         else:
             st.info("👈 Upload an image and click 'Colorize!' to see results")
     
@@ -316,7 +323,7 @@ def main():
                 alpha = blend_ratio / 100.0
                 blended = gray_rgb * (1 - alpha) + st.session_state.colorized_result * alpha
                 
-                st.image(blended, caption=f"Blend: {blend_ratio}%", use_column_width=True)
+                st.image(blended, caption=f"Blend: {blend_ratio}%", use_container_width=True)
     
     # Footer
     st.divider()
