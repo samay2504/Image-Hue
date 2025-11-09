@@ -30,9 +30,12 @@ services:
       - ../cache:/app/cache
       - ../logs:/app/logs
       - ../examples:/app/examples
+      - hf-cache:/app/.cache/huggingface  # Mount HuggingFace cache
     environment:
       - REDIS_URL=redis://redis:6379
       - CUDA_VISIBLE_DEVICES=0
+      - HF_HOME=/app/.cache/huggingface
+      - TRANSFORMERS_OFFLINE=0  # Allow downloads
     depends_on:
       redis:
         condition: service_healthy
@@ -59,9 +62,12 @@ services:
       - ../cache:/app/cache
       - ../logs:/app/logs
       - ../examples:/app/examples
+      - hf-cache:/app/.cache/huggingface  # Mount HuggingFace cache
     environment:
       - REDIS_URL=redis://redis:6379
       - CUDA_VISIBLE_DEVICES=0
+      - HF_HOME=/app/.cache/huggingface
+      - TRANSFORMERS_OFFLINE=0  # Allow downloads
     depends_on:
       redis:
         condition: service_healthy
@@ -78,6 +84,8 @@ services:
 volumes:
   redis-data:
     driver: local
+  hf-cache:
+    driver: local  # Persist HuggingFace model cache
 
 networks:
   default:

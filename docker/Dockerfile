@@ -4,6 +4,9 @@ FROM nvidia/cuda:13.0.0-cudnn8-runtime-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV CUDA_HOME=/usr/local/cuda
+ENV HF_HOME=/app/.cache/huggingface
+ENV TRANSFORMERS_CACHE=/app/.cache/huggingface/transformers
+ENV HF_HUB_CACHE=/app/.cache/huggingface/hub
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -43,7 +46,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY .. /app/
 
 # Create necessary directories
-RUN mkdir -p /app/checkpoints /app/cache /app/logs /app/examples
+RUN mkdir -p /app/checkpoints /app/cache /app/logs /app/examples /app/.cache/huggingface
+
+# Pre-download HuggingFace models (optional, uncomment to bake into image)
+# RUN python -c "from src.utils.hf_model_cache import HFModelLoader; HFModelLoader().load_model('tiny')"
 
 # Expose ports for Streamlit and Gradio
 EXPOSE 8501 7860

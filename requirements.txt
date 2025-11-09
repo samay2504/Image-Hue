@@ -3,6 +3,13 @@
 # torch==2.2.0+cu130  # Install separately with the index-url
 # torchvision==0.17.0+cu130  # Install separately with the index-url
 
+# Transformer models (for modern architecture)
+transformers==4.36.2
+timm==0.9.12
+einops==0.7.0
+huggingface-hub==0.20.2
+safetensors==0.4.1
+
 # Scientific computing
 numpy==1.26.3
 scipy==1.11.4
