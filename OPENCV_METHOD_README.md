@@ -9,30 +9,58 @@ The OpenCV colorization method is a **model-free baseline** that can colorize gr
 - **Quick demonstrations** without GPU requirements
 - **Baseline comparisons** for evaluating trained models
 
-## How It Works
+## How It Works (Enhanced Version)
 
-The OpenCV method uses classical computer vision techniques:
+The OpenCV method uses **intelligent multi-colormap blending** based on image characteristics:
 
-1. **Contrast Enhancement**: Applies CLAHE (Contrast Limited Adaptive Histogram Equalization) to improve image contrast
-2. **Colormap Application**: Uses OpenCV's `COLORMAP_AUTUMN` to apply warm, natural-looking color tones
-3. **Blending**: Mixes 70% colorized output with 30% original grayscale for natural appearance
-4. **Normalization**: Ensures output is in proper [0, 1] range
+1. **Contrast Enhancement**: Applies CLAHE (Contrast Limited Adaptive Histogram Equalization)
+2. **Brightness Analysis**: Analyzes image to identify bright, dark, and mid-tone regions
+3. **Multi-Colormap Application**: 
+   - **Bright areas** → Cool tones (blues/cyans from COLORMAP_WINTER)
+   - **Dark areas** → Warm tones (reds/oranges from COLORMAP_AUTUMN)
+   - **Mid tones** → Natural tones (browns/grays from COLORMAP_BONE)
+4. **Adaptive Blending**: Automatically adjusts color intensity based on image contrast
+5. **Normalization**: Ensures output is in proper [0, 1] range
+
+### Why Different Colors Now?
+
+**Previous Version** (orange only):
+- Used single COLORMAP_AUTUMN for entire image
+- Result: Everything looked orange/warm
+
+**Enhanced Version** (diverse colors):
+- Uses 3 different colormaps intelligently
+- Bright regions (sky, highlights) → cool/blue tones
+- Dark regions (shadows, foreground) → warm/orange tones
+- Creates more **natural-looking and diverse** colorization
 
 ### Algorithm Steps
 
 ```python
-# 1. Convert to grayscale (if needed)
-gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
-
-# 2. Enhance contrast with CLAHE
+# 1. Enhance contrast
 clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 gray_enhanced = clahe.apply(gray)
 
-# 3. Apply warm colormap
-colored = cv2.applyColorMap(gray_enhanced, cv2.COLORMAP_AUTUMN)
+# 2. Analyze brightness
+mean_brightness = np.mean(gray_enhanced)
+std_brightness = np.std(gray_enhanced)
 
-# 4. Blend with original for natural look
-result = 0.7 * colored + 0.3 * grayscale
+# 3. Apply multiple colormaps
+colored_warm = cv2.applyColorMap(gray_enhanced, cv2.COLORMAP_AUTUMN)  # Reds/oranges
+colored_cool = cv2.applyColorMap(gray_enhanced, cv2.COLORMAP_WINTER)  # Blues/cyans
+colored_natural = cv2.applyColorMap(gray_enhanced, cv2.COLORMAP_BONE)  # Browns/grays
+
+# 4. Create brightness-based masks
+bright_mask = (gray_enhanced > mean_brightness + std * 0.5)
+dark_mask = (gray_enhanced < mean_brightness - std * 0.5)
+mid_mask = 1.0 - bright_mask - dark_mask
+
+# 5. Blend colormaps based on brightness
+result = bright_mask * colored_cool + dark_mask * colored_warm + mid_mask * colored_natural
+
+# 6. Adaptive blending with grayscale
+color_ratio = 0.5 + (contrast_measure * 0.3)  # More color in high-contrast images
+final = color_ratio * result + (1 - color_ratio) * grayscale
 ```
 
 ## Usage

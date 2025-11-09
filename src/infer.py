@@ -205,14 +205,15 @@ class ColorizationInference:
     
     def _colorize_opencv(self, img_rgb: np.ndarray) -> np.ndarray:
         """
-        Colorize using OpenCV-based method.
+        Colorize using OpenCV-based method with intelligent colormap selection.
         
         Uses a combination of:
         1. Grayscale to RGB conversion using colormap
         2. Histogram equalization for better contrast
-        3. Color tone adjustment for natural appearance
+        3. Intelligent colormap selection based on image characteristics
         
         This is a baseline method that doesn't require any trained model.
+        Different regions of brightness get different color treatments for variety.
         """
         # Convert RGB to grayscale if needed
         if len(img_rgb.shape) == 3:
@@ -220,22 +221,57 @@ class ColorizationInference:
         else:
             gray = (img_rgb * 255).astype(np.uint8)
         
-        # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization) for better contrast
+        # Apply CLAHE for better contrast
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         gray_enhanced = clahe.apply(gray)
         
-        # Apply a warm colormap (COLORMAP_AUTUMN gives natural warm tones)
-        colored_bgr = cv2.applyColorMap(gray_enhanced, cv2.COLORMAP_AUTUMN)
+        # Analyze image characteristics to choose appropriate colorization
+        mean_brightness = np.mean(gray_enhanced)
+        std_brightness = np.std(gray_enhanced)
+        
+        # Strategy: Use multiple colormaps and blend them intelligently
+        # This gives more diverse and natural-looking colors
+        
+        # Colormap 1: Warm tones (AUTUMN) - for general scenes
+        colored_warm = cv2.applyColorMap(gray_enhanced, cv2.COLORMAP_AUTUMN)
+        
+        # Colormap 2: Cool tones (WINTER) - for bright areas
+        colored_cool = cv2.applyColorMap(gray_enhanced, cv2.COLORMAP_WINTER)
+        
+        # Colormap 3: Natural tones (BONE) - for medium tones
+        colored_natural = cv2.applyColorMap(gray_enhanced, cv2.COLORMAP_BONE)
+        
+        # Create brightness-based masks for blending
+        bright_mask = (gray_enhanced > mean_brightness + std_brightness * 0.5).astype(np.float32)
+        dark_mask = (gray_enhanced < mean_brightness - std_brightness * 0.5).astype(np.float32)
+        mid_mask = 1.0 - bright_mask - dark_mask
+        
+        # Expand masks to 3 channels
+        bright_mask = np.stack([bright_mask] * 3, axis=-1)
+        dark_mask = np.stack([dark_mask] * 3, axis=-1)
+        mid_mask = np.stack([mid_mask] * 3, axis=-1)
+        
+        # Blend colormaps based on brightness regions
+        # Bright areas -> cool tones (blues/cyans)
+        # Dark areas -> warm tones (reds/oranges)  
+        # Mid tones -> natural (browns/grays)
+        colored_bgr = (
+            bright_mask * colored_cool.astype(np.float32) +
+            dark_mask * colored_warm.astype(np.float32) +
+            mid_mask * colored_natural.astype(np.float32)
+        ).astype(np.uint8)
         
         # Convert to RGB
         colored_rgb = cv2.cvtColor(colored_bgr, cv2.COLOR_BGR2RGB)
         
         # Blend with original grayscale to reduce oversaturation
-        # Convert grayscale to 3-channel
         gray_rgb = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
         
-        # Blend: 70% colored, 30% grayscale for natural appearance
-        result = cv2.addWeighted(colored_rgb, 0.7, gray_rgb, 0.3, 0)
+        # Adaptive blending: More color in high-contrast images
+        color_ratio = min(0.8, 0.5 + (std_brightness / 128.0) * 0.3)
+        gray_ratio = 1.0 - color_ratio
+        
+        result = cv2.addWeighted(colored_rgb, color_ratio, gray_rgb, gray_ratio, 0)
         
         # Normalize to [0, 1]
         return result.astype(np.float32) / 255.0
