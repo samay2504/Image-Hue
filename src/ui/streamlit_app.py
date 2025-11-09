@@ -108,13 +108,13 @@ def display_blend_animation(frames, fps=20):
     # Loop through frames
     for frame in frames:
         frame_img = Image.fromarray((frame * 255).astype(np.uint8))
-        animation_placeholder.image(frame_img, use_container_width=True)
+        animation_placeholder.image(frame_img, width="stretch")
         time.sleep(delay)
     
     # Show final frame
     animation_placeholder.image(
         Image.fromarray((frames[-1] * 255).astype(np.uint8)),
-        use_container_width=True
+        width="stretch"
     )
 
 
@@ -220,7 +220,7 @@ def main():
             if uploaded_file:
                 img = Image.open(uploaded_file).convert('RGB')
                 st.session_state.current_image = np.array(img) / 255.0
-                st.image(img, caption="Uploaded Image", use_container_width=True)
+                st.image(img, caption="Uploaded Image", width="stretch")
         
         with example_tab:
             # Example images
@@ -232,7 +232,7 @@ def main():
                     if st.button("Load Example"):
                         img = Image.open(example_choice).convert('RGB')
                         st.session_state.current_image = np.array(img) / 255.0
-                        st.image(img, caption="Example Image", use_container_width=True)
+                        st.image(img, caption="Example Image", width="stretch")
                 else:
                     st.info("No example images found in examples/ directory")
             else:
@@ -240,7 +240,7 @@ def main():
         
         # Colorize button
         if st.session_state.current_image is not None:
-            if st.button("🎨 Colorize!", type="primary", use_container_width=True):
+            if st.button("🎨 Colorize!", type="primary"):
                 # Initialize engine if not loaded
                 if st.session_state.inference_engine is None:
                     with st.spinner("Initializing model..."):
@@ -264,7 +264,7 @@ def main():
         
         if st.session_state.colorized_result is not None:
             result_img = Image.fromarray((st.session_state.colorized_result * 255).astype(np.uint8))
-            st.image(result_img, caption="Colorized Result", use_container_width=True)
+            st.image(result_img, caption="Colorized Result", width="stretch")
             
             # Download button
             st.markdown(
@@ -279,9 +279,9 @@ def main():
                 # Grayscale version
                 gray = np.mean(st.session_state.current_image, axis=2, keepdims=True)
                 gray_rgb = np.repeat(gray, 3, axis=2)
-                st.image(gray_rgb, caption="Grayscale", use_container_width=True)
+                st.image(gray_rgb, caption="Grayscale", width="stretch")
             with compare_cols[1]:
-                st.image(result_img, caption="Colorized", use_container_width=True)
+                st.image(result_img, caption="Colorized", width="stretch")
         else:
             st.info("👈 Upload an image and click 'Colorize!' to see results")
     
@@ -293,7 +293,7 @@ def main():
         col_anim1, col_anim2 = st.columns([3, 1])
         
         with col_anim2:
-            if st.button("▶️ Generate Animation", use_container_width=True):
+            if st.button("▶️ Generate Animation"):
                 with st.spinner("Creating animation..."):
                     frames = st.session_state.inference_engine.create_blend_animation(
                         st.session_state.current_image,
@@ -304,7 +304,7 @@ def main():
                     st.session_state.blend_frames = frames
             
             if st.session_state.blend_frames:
-                if st.button("🔄 Play Animation", use_container_width=True):
+                if st.button("🔄 Play Animation"):
                     with col_anim1:
                         display_blend_animation(st.session_state.blend_frames, fps=20)
         
@@ -323,7 +323,7 @@ def main():
                 alpha = blend_ratio / 100.0
                 blended = gray_rgb * (1 - alpha) + st.session_state.colorized_result * alpha
                 
-                st.image(blended, caption=f"Blend: {blend_ratio}%", use_container_width=True)
+                st.image(blended, caption=f"Blend: {blend_ratio}%", width="stretch")
     
     # Footer
     st.divider()

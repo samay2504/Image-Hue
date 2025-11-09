@@ -150,8 +150,10 @@ def lab_to_rgb(lab: np.ndarray) -> np.ndarray:
     ]).T)
     
     # Apply sRGB companding
+    # Use np.errstate to suppress warnings for invalid values (e.g., negative values)
     mask = rgb_linear > 0.0031308
-    rgb = np.where(mask, 1.055 * np.power(rgb_linear, 1/2.4) - 0.055, 12.92 * rgb_linear)
+    with np.errstate(invalid='ignore'):
+        rgb = np.where(mask, 1.055 * np.power(np.abs(rgb_linear), 1/2.4) - 0.055, 12.92 * rgb_linear)
     
     rgb = np.clip(rgb, 0, 1)
     return rgb.astype(np.float32)
