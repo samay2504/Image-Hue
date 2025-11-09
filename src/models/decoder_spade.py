@@ -226,37 +226,31 @@ class SPADEDecoder(nn.Module):
             self.decoder_stages.append(nn.ModuleList(stage_blocks))
 
         # Upsample layers
-        self.upsample_layers = nn.ModuleList(
-            [
-                (
-                    nn.Sequential(
-                        nn.Upsample(
-                            scale_factor=2, mode="bilinear", align_corners=False
-                        ),
-                        nn.Conv2d(
-                            decoder_channels[i],
-                            decoder_channels[i + 1],
-                            kernel_size=3,
-                            padding=1,
-                        ),
-                    )
-                    if i < len(decoder_channels) - 1
-                    else nn.Identity()
+        self.upsample_layers = nn.ModuleList()
+        for i in range(len(decoder_channels) - 1):
+            # Upsample from decoder_channels[i+1] to decoder_channels[i]
+            self.upsample_layers.append(
+                nn.Sequential(
+                    nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),
+                    nn.Conv2d(
+                        decoder_channels[i + 1],
+                        decoder_channels[i],
+                        kernel_size=3,
+                        padding=1,
+                    ),
                 )
-                for i in range(len(decoder_channels))
-            ]
-        )
+            )
 
         # Output head
         self.output_conv = nn.Sequential(
             nn.Conv2d(
-                decoder_channels[-1],
-                decoder_channels[-1] // 2,
+                decoder_channels[0],  # After all stages, we're at decoder_channels[0]
+                decoder_channels[0] // 2,
                 kernel_size=3,
                 padding=1,
             ),
             nn.ReLU(inplace=True),
-            nn.Conv2d(decoder_channels[-1] // 2, num_output_channels, kernel_size=1),
+            nn.Conv2d(decoder_channels[0] // 2, num_output_channels, kernel_size=1),
         )
 
     def forward(
@@ -282,9 +276,10 @@ class SPADEDecoder(nn.Module):
                 else:
                     x = block(x, L_cond)
 
-            # Upsample and fuse with skip connection
+            # Upsample for next stage (going up the decoder)
             if i > 0:
-                x = self.upsample_layers[i](x)
+                # Use upsample_layers[i-1] which goes from decoder_channels[i] -> decoder_channels[i-1]
+                x = self.upsample_layers[i - 1](x)
 
                 # Add skip connection from encoder
                 skip = self.lateral_convs[i - 1](encoder_features[i - 1])
