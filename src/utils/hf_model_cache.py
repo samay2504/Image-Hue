@@ -34,7 +34,7 @@ SIZE_TO_MODELS = {
 
 class HFModelLoader:
     """Safe loader for Hugging Face transformer models."""
-    
+
     def __init__(self, cache_dir: Optional[Path] = None):
         """
         Args:
@@ -43,23 +43,23 @@ class HFModelLoader:
         self.cache_dir = cache_dir or HF_LOCAL_CACHE
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"HF cache directory: {self.cache_dir}")
-    
+
     def load_model(
         self,
         model_name: Optional[str] = None,
         size: str = "base",
         local_only: bool = False,
-        fallback_on_error: bool = True
+        fallback_on_error: bool = True,
     ) -> Tuple[Any, Dict[str, Any]]:
         """
         Load a transformer model with fallback strategy.
-        
+
         Args:
             model_name: Specific model name to load (e.g., "google/vit-base-patch16-224")
             size: Size category ("tiny", "base", "swin") if model_name not specified
             local_only: Only use locally cached models
             fallback_on_error: Try smaller models on failure
-            
+
         Returns:
             (model, metadata) where metadata contains:
                 - "model_name": str
@@ -75,80 +75,84 @@ class HFModelLoader:
             candidates = [
                 (name, sz, dim, blocks)
                 for name, sz, dim, blocks in MODEL_CANDIDATES
-                if size == "tiny" or sz != "tiny"  # Skip tiny unless explicitly requested
+                if size == "tiny"
+                or sz != "tiny"  # Skip tiny unless explicitly requested
             ]
-            
+
             # Filter by size preference
             if size in SIZE_TO_MODELS:
                 preferred = SIZE_TO_MODELS[size]
                 candidates = [
-                    c for c in candidates
-                    if c[0] in preferred
+                    c for c in candidates if c[0] in preferred
                 ] + candidates  # Preferred first, then fallbacks
-        
+
         last_error = None
-        
+
         for candidate_name, candidate_size, hidden_dim, num_blocks in candidates:
             try:
                 logger.info(f"Attempting to load model: {candidate_name}")
-                
+
                 # Try local-only first
                 try:
                     model, metadata = self._load_single_model(
                         candidate_name, local_files_only=True
                     )
-                    metadata.update({
-                        "model_name": candidate_name,
-                        "size": candidate_size,
-                        "source": "local",
-                        "hidden_dim": hidden_dim or metadata.get("hidden_dim"),
-                        "num_blocks": num_blocks or metadata.get("num_blocks"),
-                    })
+                    metadata.update(
+                        {
+                            "model_name": candidate_name,
+                            "size": candidate_size,
+                            "source": "local",
+                            "hidden_dim": hidden_dim or metadata.get("hidden_dim"),
+                            "num_blocks": num_blocks or metadata.get("num_blocks"),
+                        }
+                    )
                     logger.info(f"✓ Loaded from local cache: {candidate_name}")
                     return model, metadata
-                
+
                 except Exception as e:
                     if local_only:
                         raise
                     logger.debug(f"Not in local cache: {candidate_name}")
-                
+
                 # Try downloading if not local_only
                 if not local_only:
                     logger.info(f"Downloading model: {candidate_name}")
                     model, metadata = self._load_single_model(
                         candidate_name, local_files_only=False
                     )
-                    metadata.update({
-                        "model_name": candidate_name,
-                        "size": candidate_size,
-                        "source": "downloaded",
-                        "hidden_dim": hidden_dim or metadata.get("hidden_dim"),
-                        "num_blocks": num_blocks or metadata.get("num_blocks"),
-                    })
+                    metadata.update(
+                        {
+                            "model_name": candidate_name,
+                            "size": candidate_size,
+                            "source": "downloaded",
+                            "hidden_dim": hidden_dim or metadata.get("hidden_dim"),
+                            "num_blocks": num_blocks or metadata.get("num_blocks"),
+                        }
+                    )
                     logger.info(f"✓ Downloaded and loaded: {candidate_name}")
                     return model, metadata
-            
+
             except Exception as e:
                 last_error = e
                 logger.warning(f"Failed to load {candidate_name}: {e}")
-                
+
                 if not fallback_on_error:
                     raise
-                
+
                 # Try next candidate
                 continue
-        
+
         # All candidates failed
         error_msg = f"Failed to load any model candidate. Last error: {last_error}"
         logger.error(error_msg)
         raise RuntimeError(error_msg)
-    
+
     def _load_single_model(
         self, model_name: str, local_files_only: bool = False
     ) -> Tuple[Any, Dict[str, Any]]:
         """
         Load a single model from HuggingFace.
-        
+
         Returns:
             (model, metadata_dict)
         """
@@ -159,14 +163,14 @@ class HFModelLoader:
                 "transformers library not installed. "
                 "Install with: pip install transformers"
             )
-        
+
         # Load config first to get metadata
         config = AutoConfig.from_pretrained(
             model_name,
             cache_dir=str(self.cache_dir),
             local_files_only=local_files_only,
         )
-        
+
         # Load model
         model = AutoModel.from_pretrained(
             model_name,
@@ -174,7 +178,7 @@ class HFModelLoader:
             local_files_only=local_files_only,
             add_pooling_layer=False,  # We'll use intermediate features
         )
-        
+
         # Extract metadata
         metadata = {
             "config": config,
@@ -183,13 +187,13 @@ class HFModelLoader:
             "patch_size": getattr(config, "patch_size", 16),
             "image_size": getattr(config, "image_size", 224),
         }
-        
+
         return model, metadata
-    
+
     def list_available_local_models(self) -> List[str]:
         """List models available in local cache."""
         available = []
-        
+
         for model_name, _, _, _ in MODEL_CANDIDATES:
             try:
                 # Check if model exists locally
@@ -198,9 +202,9 @@ class HFModelLoader:
                     available.append(model_name)
             except Exception:
                 continue
-        
+
         return available
-    
+
     def get_model_info(self, model_name: str) -> Optional[Dict[str, Any]]:
         """Get info about a model candidate."""
         for name, size, dim, blocks in MODEL_CANDIDATES:
@@ -217,15 +221,15 @@ class HFModelLoader:
 def get_available_models(local_only: bool = False) -> List[Dict[str, Any]]:
     """
     Get list of available models.
-    
+
     Args:
         local_only: Only return locally cached models
-        
+
     Returns:
         List of model info dicts
     """
     loader = HFModelLoader()
-    
+
     if local_only:
         available_names = loader.list_available_local_models()
         return [
@@ -253,13 +257,13 @@ def load_transformer_model(
 ) -> Tuple[Any, Dict[str, Any]]:
     """
     Convenience function to load a transformer model.
-    
+
     Args:
         model_name: Specific model name
         size: Size category if model_name not specified
         local_only: Only use local cache
         device: Device to move model to
-        
+
     Returns:
         (model, metadata)
     """
@@ -269,8 +273,8 @@ def load_transformer_model(
         size=size,
         local_only=local_only,
     )
-    
+
     if device is not None:
         model = model.to(device)
-    
+
     return model, metadata
