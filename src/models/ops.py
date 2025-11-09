@@ -371,3 +371,109 @@ def ab_to_bin_indices(ab: np.ndarray, ab_grid: Optional[np.ndarray] = None) -> n
     indices = np.argmin(distances, axis=1)
     
     return indices.reshape(ab.shape[:2])
+
+
+# ============================================================================
+# Token reshaping helpers for transformer encoders
+# ============================================================================
+
+def tokens_to_feature_map(
+    tokens: torch.Tensor,
+    H: int,
+    W: int,
+    patch_size: int,
+    remove_cls_token: bool = True,
+) -> torch.Tensor:
+    """
+    Reshape transformer token sequence to spatial feature map.
+    
+    Args:
+        tokens: [B, N_tokens, C] token sequence from transformer
+        H: Original image height
+        W: Original image width
+        patch_size: Patch size used by transformer (e.g., 16)
+        remove_cls_token: Whether to remove CLS token (first token)
+        
+    Returns:
+        feature_map: [B, C, H_patch, W_patch] where
+                     H_patch = H // patch_size, W_patch = W // patch_size
+    """
+    B, N, C = tokens.shape
+    H_patch = H // patch_size
+    W_patch = W // patch_size
+    
+    # Handle CLS token
+    if remove_cls_token and N == H_patch * W_patch + 1:
+        tokens = tokens[:, 1:, :]  # Remove first (CLS) token
+    
+    # Verify token count matches spatial dimensions
+    expected_tokens = H_patch * W_patch
+    if tokens.shape[1] != expected_tokens:
+        raise ValueError(
+            f"Token count mismatch: got {tokens.shape[1]}, "
+            f"expected {expected_tokens} (H_patch={H_patch}, W_patch={W_patch})"
+        )
+    
+    # Reshape: [B, N, C] -> [B, C, H_patch, W_patch]
+    tokens = tokens.permute(0, 2, 1)  # [B, C, N]
+    feature_map = tokens.reshape(B, C, H_patch, W_patch)
+    
+    return feature_map
+
+
+def upsample_feature_map(
+    feature: torch.Tensor,
+    target_size: tuple,
+    mode: str = 'bilinear',
+    align_corners: bool = False,
+) -> torch.Tensor:
+    """
+    Upsample feature map to target spatial size.
+    
+    Args:
+        feature: [B, C, H, W] feature map
+        target_size: (H_target, W_target)
+        mode: Interpolation mode ('bilinear', 'nearest', etc.)
+        align_corners: Whether to align corners in bilinear interpolation
+        
+    Returns:
+        upsampled: [B, C, H_target, W_target]
+    """
+    if feature.shape[2:] == target_size:
+        return feature
+    
+    return F.interpolate(
+        feature,
+        size=target_size,
+        mode=mode,
+        align_corners=align_corners if mode == 'bilinear' else None,
+    )
+
+
+def multi_scale_feature_pyramid(
+    features: list,
+    target_sizes: list,
+    mode: str = 'bilinear',
+) -> list:
+    """
+    Resize multi-scale features to target sizes.
+    
+    Args:
+        features: List of [B, C_i, H_i, W_i] feature tensors
+        target_sizes: List of (H_target, W_target) tuples
+        mode: Interpolation mode
+        
+    Returns:
+        List of resized feature tensors
+    """
+    if len(features) != len(target_sizes):
+        raise ValueError(
+            f"Number of features ({len(features)}) must match "
+            f"number of target sizes ({len(target_sizes)})"
+        )
+    
+    return [
+        upsample_feature_map(feat, size, mode=mode)
+        for feat, size in zip(features, target_sizes)
+    ]
+
