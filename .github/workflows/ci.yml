@@ -47,6 +47,14 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
     
+    - name: Cache HuggingFace models
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/huggingface
+        key: ${{ runner.os }}-huggingface-${{ hashFiles('src/utils/hf_model_cache.py') }}
+        restore-keys: |
+          ${{ runner.os }}-huggingface-
+    
     - name: Install system dependencies
       run: |
         sudo apt-get update
@@ -59,9 +67,24 @@ jobs:
         pip install -r requirements.txt
         pip install -r requirements-dev.txt
     
+    - name: Download HuggingFace models (if not cached)
+      run: |
+        python -c "
+        from src.utils.hf_model_cache import HFModelLoader
+        loader = HFModelLoader(local_only=False)
+        # Pre-download tiny model for tests
+        loader.load_model('tiny')
+        " || echo "HF model download failed, will use local_only mode in tests"
+      continue-on-error: true
+      env:
+        HF_HUB_OFFLINE: 0
+    
     - name: Run tests
       run: |
         pytest src/tests/ -v --cov=src --cov-report=xml --cov-report=term
+      env:
+        HF_HUB_OFFLINE: 1  # Use offline mode during tests
+        TRANSFORMERS_OFFLINE: 1
     
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
