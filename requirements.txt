@@ -1,0 +1,32 @@
+# Core deep learning
+# Install torch with: pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+# torch==2.2.0+cu130  # Install separately with the index-url
+# torchvision==0.17.0+cu130  # Install separately with the index-url
+
+# Scientific computing
+numpy==1.26.3
+scipy==1.11.4
+scikit-image==0.22.0
+
+# Image processing
+Pillow==10.2.0
+opencv-python==4.9.0.80
+
+# UI frameworks
+streamlit==1.29.0
+gradio==4.12.0
+
+# Caching
+redis==5.0.1
+
+# Logging and monitoring
+tensorboard==2.15.1
+tqdm==4.66.1
+
+# Utilities
+typing-extensions==4.9.0
+pyyaml==6.0.1
+psutil==5.9.6
+
+# Production server (optional for Gradio)
+uvicorn==0.25.0

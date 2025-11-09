@@ -1,0 +1,380 @@
+"""
+Colorization model architectures.
+
+Implements:
+- PaperNet: VGG-styled network from "Colorful Image Colorization" paper
+- MobileLiteVariant: Memory-efficient variant for low-VRAM training
+"""
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from typing import Dict, Any, Optional
+
+
+class PaperNet(nn.Module):
+    """
+    Colorization network from Zhang et al. ECCV 2016.
+    
+    Architecture follows Table 4 from paper with dilated convolutions.
+    Input: L channel (1, H, W)
+    Output: Distribution over Q=313 ab bins (313, H, W)
+    """
+    
+    def __init__(self, num_classes: int = 313, input_channels: int = 1, use_checkpointing: bool = False):
+        super().__init__()
+        self.num_classes = num_classes
+        self.use_checkpointing = use_checkpointing
+        
+        # Encoder with dilated convolutions
+        # conv1: 64 filters, stride 1
+        self.conv1_1 = nn.Conv2d(input_channels, 64, kernel_size=3, stride=1, padding=1)
+        self.conv1_2 = nn.Conv2d(64, 64, kernel_size=3, stride=2, padding=1)
+        self.bn1 = nn.BatchNorm2d(64)
+        
+        # conv2: 128 filters, stride 1
+        self.conv2_1 = nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1)
+        self.conv2_2 = nn.Conv2d(128, 128, kernel_size=3, stride=2, padding=1)
+        self.bn2 = nn.BatchNorm2d(128)
+        
+        # conv3: 256 filters, stride 1
+        self.conv3_1 = nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1)
+        self.conv3_2 = nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1)
+        self.conv3_3 = nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1)
+        self.bn3 = nn.BatchNorm2d(256)
+        
+        # conv4: 512 filters, stride 1
+        self.conv4_1 = nn.Conv2d(256, 512, kernel_size=3, stride=1, padding=1)
+        self.conv4_2 = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1)
+        self.conv4_3 = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1)
+        self.bn4 = nn.BatchNorm2d(512)
+        
+        # conv5: 512 filters, dilation 2
+        self.conv5_1 = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=2, dilation=2)
+        self.conv5_2 = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=2, dilation=2)
+        self.conv5_3 = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=2, dilation=2)
+        self.bn5 = nn.BatchNorm2d(512)
+        
+        # conv6: 512 filters, dilation 2
+        self.conv6_1 = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=2, dilation=2)
+        self.conv6_2 = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=2, dilation=2)
+        self.conv6_3 = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=2, dilation=2)
+        self.bn6 = nn.BatchNorm2d(512)
+        
+        # conv7: 512 filters, stride 1
+        self.conv7_1 = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1)
+        self.conv7_2 = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1)
+        self.conv7_3 = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1)
+        self.bn7 = nn.BatchNorm2d(512)
+        
+        # conv8: 256 filters, upsample
+        self.conv8_1 = nn.Conv2d(512, 256, kernel_size=3, stride=1, padding=1)
+        self.conv8_2 = nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1)
+        self.conv8_3 = nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1)
+        self.bn8 = nn.BatchNorm2d(256)
+        
+        # Output layer
+        self.conv_out = nn.Conv2d(256, num_classes, kernel_size=1, stride=1, padding=0)
+        
+        self.relu = nn.ReLU(inplace=True)
+        
+        # Initialize weights
+        self._initialize_weights()
+    
+    def _initialize_weights(self):
+        """Xavier initialization for conv layers."""
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass.
+        
+        Args:
+            x: (B, 1, H, W) L channel input
+            
+        Returns:
+            out: (B, Q, H, W) logits over ab bins
+        """
+        # Encoder
+        x = self.relu(self.conv1_1(x))
+        x = self.relu(self.bn1(self.conv1_2(x)))  # 1/2 resolution
+        
+        x = self.relu(self.conv2_1(x))
+        x = self.relu(self.bn2(self.conv2_2(x)))  # 1/4 resolution
+        
+        x = self.relu(self.conv3_1(x))
+        x = self.relu(self.conv3_2(x))
+        x = self.relu(self.bn3(self.conv3_3(x)))  # 1/8 resolution
+        
+        x = self.relu(self.conv4_1(x))
+        x = self.relu(self.conv4_2(x))
+        x = self.relu(self.bn4(self.conv4_3(x)))  # 1/8 resolution
+        
+        # Dilated convolutions
+        x = self.relu(self.conv5_1(x))
+        x = self.relu(self.conv5_2(x))
+        x = self.relu(self.bn5(self.conv5_3(x)))
+        
+        x = self.relu(self.conv6_1(x))
+        x = self.relu(self.conv6_2(x))
+        x = self.relu(self.bn6(self.conv6_3(x)))
+        
+        x = self.relu(self.conv7_1(x))
+        x = self.relu(self.conv7_2(x))
+        x = self.relu(self.bn7(self.conv7_3(x)))
+        
+        # Decoder
+        x = F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=False)
+        x = self.relu(self.conv8_1(x))
+        x = self.relu(self.conv8_2(x))
+        x = self.relu(self.bn8(self.conv8_3(x)))  # 1/4 resolution
+        
+        # Upsample to original resolution
+        x = self.conv_out(x)
+        x = F.interpolate(x, scale_factor=4, mode='bilinear', align_corners=False)
+        
+        return x
+
+
+class MobileLiteVariant(nn.Module):
+    """
+    Memory-efficient variant for low-VRAM training.
+    
+    Uses fewer channels and simpler architecture while maintaining
+    the classification-based colorization approach.
+    """
+    
+    def __init__(self, num_classes: int = 313, input_channels: int = 1, 
+                 base_channels: int = 32):
+        super().__init__()
+        self.num_classes = num_classes
+        
+        # Encoder with progressive downsampling
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(input_channels, base_channels, 3, stride=2, padding=1),
+            nn.BatchNorm2d(base_channels),
+            nn.ReLU(inplace=True)
+        )  # 1/2 resolution
+        
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(base_channels, base_channels * 2, 3, stride=2, padding=1),
+            nn.BatchNorm2d(base_channels * 2),
+            nn.ReLU(inplace=True)
+        )  # 1/4 resolution
+        
+        self.conv3 = nn.Sequential(
+            nn.Conv2d(base_channels * 2, base_channels * 4, 3, stride=2, padding=1),
+            nn.BatchNorm2d(base_channels * 4),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(base_channels * 4, base_channels * 4, 3, padding=1),
+            nn.BatchNorm2d(base_channels * 4),
+            nn.ReLU(inplace=True)
+        )  # 1/8 resolution
+        
+        # Dilated convolutions for receptive field
+        self.conv4 = nn.Sequential(
+            nn.Conv2d(base_channels * 4, base_channels * 4, 3, padding=2, dilation=2),
+            nn.BatchNorm2d(base_channels * 4),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(base_channels * 4, base_channels * 4, 3, padding=2, dilation=2),
+            nn.BatchNorm2d(base_channels * 4),
+            nn.ReLU(inplace=True)
+        )
+        
+        # Decoder
+        self.decoder = nn.Sequential(
+            nn.Conv2d(base_channels * 4, base_channels * 2, 3, padding=1),
+            nn.BatchNorm2d(base_channels * 2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(base_channels * 2, base_channels, 3, padding=1),
+            nn.BatchNorm2d(base_channels),
+            nn.ReLU(inplace=True)
+        )
+        
+        # Output layer
+        self.conv_out = nn.Conv2d(base_channels, num_classes, 1)
+        
+        self._initialize_weights()
+    
+    def _initialize_weights(self):
+        """Xavier initialization."""
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass.
+        
+        Args:
+            x: (B, 1, H, W) L channel input
+            
+        Returns:
+            out: (B, Q, H, W) logits over ab bins
+        """
+        # Store input size
+        H, W = x.shape[2], x.shape[3]
+        
+        # Encoder
+        x1 = self.conv1(x)  # 1/2
+        x2 = self.conv2(x1)  # 1/4
+        x3 = self.conv3(x2)  # 1/8
+        x4 = self.conv4(x3)  # 1/8
+        
+        # Decoder with upsampling
+        x = F.interpolate(x4, scale_factor=2, mode='bilinear', align_corners=False)  # 1/4
+        x = self.decoder(x)
+        
+        # Output
+        x = self.conv_out(x)
+        
+        # Upsample to original resolution
+        x = F.interpolate(x, size=(H, W), mode='bilinear', align_corners=False)
+        
+        return x
+
+
+class L2RegressionNet(nn.Module):
+    """
+    Simple L2 regression baseline (predicts ab directly instead of classification).
+    
+    Used for comparison with classification approach.
+    """
+    
+    def __init__(self, input_channels: int = 1, base_channels: int = 32):
+        super().__init__()
+        
+        self.encoder = nn.Sequential(
+            nn.Conv2d(input_channels, base_channels, 3, stride=2, padding=1),
+            nn.BatchNorm2d(base_channels),
+            nn.ReLU(inplace=True),
+            
+            nn.Conv2d(base_channels, base_channels * 2, 3, stride=2, padding=1),
+            nn.BatchNorm2d(base_channels * 2),
+            nn.ReLU(inplace=True),
+            
+            nn.Conv2d(base_channels * 2, base_channels * 4, 3, stride=2, padding=1),
+            nn.BatchNorm2d(base_channels * 4),
+            nn.ReLU(inplace=True),
+            
+            nn.Conv2d(base_channels * 4, base_channels * 4, 3, padding=2, dilation=2),
+            nn.BatchNorm2d(base_channels * 4),
+            nn.ReLU(inplace=True)
+        )
+        
+        self.decoder = nn.Sequential(
+            nn.Conv2d(base_channels * 4, base_channels * 2, 3, padding=1),
+            nn.BatchNorm2d(base_channels * 2),
+            nn.ReLU(inplace=True),
+            
+            nn.Conv2d(base_channels * 2, base_channels, 3, padding=1),
+            nn.BatchNorm2d(base_channels),
+            nn.ReLU(inplace=True),
+            
+            nn.Conv2d(base_channels, 2, 1)  # Output 2 channels (a, b)
+        )
+        
+        self._initialize_weights()
+    
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass.
+        
+        Args:
+            x: (B, 1, H, W) L channel input
+            
+        Returns:
+            out: (B, 2, H, W) predicted ab channels
+        """
+        H, W = x.shape[2], x.shape[3]
+        
+        x = self.encoder(x)
+        x = F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=False)
+        x = self.decoder(x)
+        x = F.interpolate(x, size=(H, W), mode='bilinear', align_corners=False)
+        
+        # Tanh to bound output to reasonable ab range
+        x = torch.tanh(x) * 110  # ab roughly in [-110, 110]
+        
+        return x
+
+
+def get_model(config: Dict[str, Any]) -> nn.Module:
+    """
+    Factory function to create models.
+    
+    Args:
+        config: Configuration dictionary with keys:
+            - model_type: 'paper', 'mobile', 'l2'
+            - num_classes: number of ab bins (default: 313)
+            - base_channels: base channel count for mobile/l2 (default: 32)
+            
+    Returns:
+        model: PyTorch model
+    """
+    model_type = config.get('model_type', 'mobile')
+    num_classes = config.get('num_classes', 313)
+    base_channels = config.get('base_channels', 32)
+    
+    if model_type == 'paper':
+        return PaperNet(num_classes=num_classes)
+    elif model_type == 'mobile':
+        return MobileLiteVariant(num_classes=num_classes, base_channels=base_channels)
+    elif model_type == 'l2':
+        return L2RegressionNet(base_channels=base_channels)
+    else:
+        raise ValueError(f"Unknown model type: {model_type}")
+
+
+def count_parameters(model: nn.Module) -> int:
+    """Count trainable parameters in model."""
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
+if __name__ == '__main__':
+    # Quick test
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
+    # Test PaperNet
+    print("Testing PaperNet...")
+    model = PaperNet(num_classes=313)
+    print(f"Parameters: {count_parameters(model):,}")
+    x = torch.randn(2, 1, 256, 256)
+    out = model(x)
+    print(f"Input: {x.shape}, Output: {out.shape}")
+    
+    # Test MobileLiteVariant
+    print("\nTesting MobileLiteVariant...")
+    model = MobileLiteVariant(num_classes=313, base_channels=32)
+    print(f"Parameters: {count_parameters(model):,}")
+    out = model(x)
+    print(f"Input: {x.shape}, Output: {out.shape}")
+    
+    # Test L2RegressionNet
+    print("\nTesting L2RegressionNet...")
+    model = L2RegressionNet(base_channels=32)
+    print(f"Parameters: {count_parameters(model):,}")
+    out = model(x)
+    print(f"Input: {x.shape}, Output: {out.shape}")

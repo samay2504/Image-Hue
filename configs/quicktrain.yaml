@@ -1,0 +1,39 @@
+# Example training configuration for quick training
+
+# Model configuration
+model:
+  model_type: "mobile"  # Options: paper, mobile, l2
+  num_classes: 313
+  base_channels: 32
+
+# Training hyperparameters (scaled for quick training)
+num_epochs: 50
+batch_size: 16
+learning_rate: 1e-4  # Higher LR for quick convergence
+weight_decay: 1e-3
+
+# LR schedule
+lr_schedule: "step"
+lr_milestones: [20000, 40000]  # Scaled from paper's 200k, 375k
+lr_gamma: 0.333
+
+# Training settings
+use_amp: true
+auto_batch_size: false
+image_size: 256
+num_workers: 4
+seed: 42
+
+# Logging and checkpointing
+log_dir: "logs"
+tensorboard_dir: "runs"
+checkpoint_dir: "checkpoints"
+save_interval: 5  # Save every 5 epochs
+log_interval: 10  # Log every 10 steps
+sample_interval: 500  # Save sample images every 500 steps
+
+# Class rebalancing
+class_weights_file: "data/color_stats.npz"  # Optional, computed from dataset
+
+# Resume training
+resume_from: null  # Path to checkpoint to resume from

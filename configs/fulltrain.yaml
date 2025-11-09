@@ -1,0 +1,38 @@
+# Full training configuration (paper settings)
+
+# Model configuration
+model:
+  model_type: "paper"  # Full PaperNet architecture
+  num_classes: 313
+
+# Training hyperparameters (from paper)
+num_epochs: 100  # Approximate epochs for 450k iterations with ImageNet
+batch_size: 32  # Adjust based on GPU memory
+learning_rate: 3e-5  # Initial LR from paper
+weight_decay: 1e-3
+
+# LR schedule (from paper)
+lr_schedule: "step"
+lr_milestones: [200000, 375000]  # Drop to 1e-5, then 3e-6
+lr_gamma: 0.333
+
+# Training settings
+use_amp: true
+auto_batch_size: true  # Auto-adjust batch size based on GPU memory
+image_size: 256
+num_workers: 8
+seed: 42
+
+# Logging and checkpointing
+log_dir: "logs"
+tensorboard_dir: "runs"
+checkpoint_dir: "checkpoints"
+save_interval: 10
+log_interval: 100
+sample_interval: 1000
+
+# Class rebalancing
+class_weights_file: "data/imagenet_color_stats.npz"
+
+# Resume training
+resume_from: null

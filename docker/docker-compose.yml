@@ -1,0 +1,84 @@
+version: '3.8'
+
+services:
+  # Redis cache service
+  redis:
+    image: redis:7-alpine
+    container_name: colorize-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # Colorization app (Streamlit)
+  app-streamlit:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: colorize-streamlit
+    ports:
+      - "8501:8501"
+    volumes:
+      - ../checkpoints:/app/checkpoints
+      - ../cache:/app/cache
+      - ../logs:/app/logs
+      - ../examples:/app/examples
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - CUDA_VISIBLE_DEVICES=0
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: python -m streamlit run src/ui/streamlit_app.py --server.address 0.0.0.0 --server.port 8501
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # Colorization app (Gradio)
+  app-gradio:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: colorize-gradio
+    ports:
+      - "7860:7860"
+    volumes:
+      - ../checkpoints:/app/checkpoints
+      - ../cache:/app/cache
+      - ../logs:/app/logs
+      - ../examples:/app/examples
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - CUDA_VISIBLE_DEVICES=0
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: python src/ui/gradio_app.py --redis-url redis://redis:6379 --port 7860
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  redis-data:
+    driver: local
+
+networks:
+  default:
+    name: colorize-network
