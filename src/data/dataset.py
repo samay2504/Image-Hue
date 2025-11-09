@@ -222,15 +222,34 @@ def compute_dataset_color_statistics(data_dir: str, output_file: str,
     """
     from src.models.ops import compute_empirical_distribution_from_images, get_ab_grid
     
+    # Ensure output directory exists
+    output_path = Path(output_file)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
     # Find all images
     data_path = Path(data_dir)
-    extensions = {'.jpg', '.jpeg', '.png', '.bmp'}
+    if not data_path.exists():
+        raise FileNotFoundError(f"Directory not found: {data_dir}")
+    
+    extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff'}
+    print(f"Scanning for images in: {data_path}")
     image_paths = [
         str(p) for p in data_path.rglob('*')
         if p.suffix.lower() in extensions
-    ][:max_images]
+    ]
+    
+    if not image_paths:
+        raise ValueError(f"No images found in {data_dir}. Supported formats: {', '.join(extensions)}")
+    
+    # Limit to max_images
+    if len(image_paths) > max_images:
+        print(f"Found {len(image_paths)} images, using first {max_images} for statistics")
+        image_paths = image_paths[:max_images]
+    else:
+        print(f"Found {len(image_paths)} images")
     
     print(f"Computing color statistics from {len(image_paths)} images...")
+    print("This may take a few minutes...")
     
     # Compute empirical distribution
     empirical_dist = compute_empirical_distribution_from_images(image_paths)
@@ -239,42 +258,91 @@ def compute_dataset_color_statistics(data_dir: str, output_file: str,
     from src.models.ops import compute_class_rebalancing_weights
     weights = compute_class_rebalancing_weights(empirical_dist)
     
-    # Save
+    # Get ab grid
     ab_grid = get_ab_grid()
+    
+    # Save
     np.savez(output_file,
              empirical_distribution=empirical_dist,
              class_weights=weights,
              ab_grid=ab_grid)
     
-    print(f"Saved color statistics to {output_file}")
-    print(f"Empirical distribution shape: {empirical_dist.shape}")
-    print(f"Class weights shape: {weights.shape}")
-    print(f"Class weights - min: {weights.min():.3f}, max: {weights.max():.3f}, mean: {weights.mean():.3f}")
+    print(f"\n✓ Saved color statistics to: {output_file}")
+    print(f"  - Empirical distribution shape: {empirical_dist.shape}")
+    print(f"  - Class weights shape: {weights.shape}")
+    print(f"  - Class weights - min: {weights.min():.3f}, max: {weights.max():.3f}, mean: {weights.mean():.3f}")
+    print(f"  - AB grid shape: {ab_grid.shape}")
+    
+    return output_file
 
 
 if __name__ == '__main__':
-    # Test dataset loading
     import sys
+    import argparse
     
-    if len(sys.argv) > 1:
-        data_dir = sys.argv[1]
+    parser = argparse.ArgumentParser(description='Dataset utilities for colorization')
+    parser.add_argument('data_dir', type=str, help='Directory containing images')
+    parser.add_argument('--output', type=str, default=None,
+                       help='Output file for color statistics (e.g., data/color_stats.npz)')
+    parser.add_argument('--max-images', type=int, default=10000,
+                       help='Maximum number of images to process for statistics')
+    parser.add_argument('--test', action='store_true',
+                       help='Test dataset loading instead of computing statistics')
+    
+    args = parser.parse_args()
+    
+    # Check if directory exists
+    if not os.path.exists(args.data_dir):
+        print(f"Error: Directory '{args.data_dir}' does not exist!")
+        sys.exit(1)
+    
+    # Compute statistics mode (default if --output provided)
+    if args.output:
+        print("=" * 60)
+        print("Computing Color Statistics")
+        print("=" * 60)
+        compute_dataset_color_statistics(
+            args.data_dir,
+            args.output,
+            max_images=args.max_images
+        )
+        print("=" * 60)
+        print(f"✓ Successfully saved statistics to: {args.output}")
+        print("=" * 60)
+    
+    # Test mode
+    elif args.test or args.output is None:
+        print("=" * 60)
+        print("Testing ColorizationDataset")
+        print("=" * 60)
+        dataset = ColorizationDataset(args.data_dir, target_size=256)
         
-        print("Testing ColorizationDataset...")
-        dataset = ColorizationDataset(data_dir, target_size=256)
+        if len(dataset) == 0:
+            print(f"Warning: Found 0 images in {args.data_dir}")
+            print("Supported formats: .jpg, .jpeg, .png, .bmp, .tiff")
+            sys.exit(1)
         
-        if len(dataset) > 0:
-            L, ab, target = dataset[0]
-            print(f"L shape: {L.shape}, range: [{L.min():.2f}, {L.max():.2f}]")
-            print(f"ab shape: {ab.shape}, range: [{ab.min():.2f}, {ab.max():.2f}]")
-            print(f"Target shape: {target.shape}")
-            
-            # Test dataloader
-            loader = torch.utils.data.DataLoader(dataset, batch_size=4, shuffle=True)
-            for batch in loader:
-                L_batch, ab_batch, target_batch = batch
-                print(f"\nBatch L: {L_batch.shape}")
-                print(f"Batch ab: {ab_batch.shape}")
-                print(f"Batch target: {target_batch.shape}")
-                break
-    else:
-        print("Usage: python dataset.py <data_directory>")
+        print(f"\n✓ Successfully loaded {len(dataset)} images")
+        
+        # Test first image
+        print("\nTesting first image...")
+        L, ab, target = dataset[0]
+        print(f"  L shape: {L.shape}, range: [{L.min():.2f}, {L.max():.2f}]")
+        print(f"  ab shape: {ab.shape}, range: [{ab.min():.2f}, {ab.max():.2f}]")
+        print(f"  Target shape: {target.shape}")
+        
+        # Test dataloader
+        print("\nTesting dataloader with batch_size=4...")
+        loader = torch.utils.data.DataLoader(dataset, batch_size=4, shuffle=True)
+        for batch in loader:
+            L_batch, ab_batch, target_batch = batch
+            print(f"  Batch L: {L_batch.shape}")
+            print(f"  Batch ab: {ab_batch.shape}")
+            print(f"  Batch target: {target_batch.shape}")
+            break
+        
+        print("\n" + "=" * 60)
+        print("✓ Dataset test completed successfully!")
+        print("=" * 60)
+        print("\nTo compute color statistics, run:")
+        print(f"  python -m src.data.dataset {args.data_dir} --output data/color_stats.npz")
