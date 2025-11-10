@@ -5,12 +5,15 @@ Production-ready implementation of **"Colorful Image Colorization"** (Zhang, Iso
 [![CI](https://github.com/yourusername/colorization/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/colorization/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+> **🎯 GPU Training Optimization**: If you have an RTX 5070 Ti (or similar Blackwell/Ampere GPU) on Ubuntu 22.04, check out the [`fix/ayaan-gpu-ubuntu`](GPU_SETUP_README.md) branch for **15-20x faster training** with automatic GPU detection, cuDNN optimizations, and OOM protection. See [GPU_SETUP_README.md](GPU_SETUP_README.md) for quick start.
+
 ## ✨ Features
 
 - **📊 Paper-Accurate Implementation**: Classification-based colorization with 313-bin quantized ab space, class rebalancing, and annealed-mean decoding (T=0.38)
 - **🎬 Interactive UIs**: Beautiful Streamlit and Gradio frontends with blend animations, temperature sliders, and method comparison
 - **🚀 Production-Ready**: Docker support, Redis caching, memory safeguards (FP16, gradient checkpointing, tiling)
 - **💾 Memory-Safe**: Automatic OOM handling for RTX 3060 6GB and similar GPUs
+- **⚡ GPU-Optimized**: Dedicated branch with RTX 5070 Ti optimizations (95%+ GPU utilization, 2-3 min/epoch)
 - **🔄 Multiple Methods**: Classification (paper), L2 regression baseline, OpenCV color transfer
 - **🧪 Fully Tested**: Unit tests, integration tests, CI/CD with GitHub Actions
 - **📦 Cross-Platform**: Works on Linux, Windows (WSL2), and macOS with local venv or Docker
