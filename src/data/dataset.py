@@ -185,10 +185,10 @@ def create_data_loaders(train_dir: str, val_dir: Optional[str] = None,
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
-        pin_memory=True,
-        drop_last=True
-        # persistent_workers=True,
-        # prefetch_factor=4
+        pin_memory=torch.cuda.is_available(),  # Only pin for CUDA
+        drop_last=True,
+        persistent_workers=num_workers > 0,  # Keep workers alive between epochs
+        prefetch_factor=2 if num_workers > 0 else None  # Prefetch 2 batches per worker
     )
     
     # Validation dataset
@@ -205,10 +205,10 @@ def create_data_loaders(train_dir: str, val_dir: Optional[str] = None,
             batch_size=batch_size,
             shuffle=False,
             num_workers=num_workers,
-            pin_memory=True,
-            drop_last=False
-            # persistent_workers=True,
-            # prefetch_factor=4
+            pin_memory=torch.cuda.is_available(),  # Only pin for CUDA
+            drop_last=False,
+            persistent_workers=num_workers > 0,  # Keep workers alive between epochs
+            prefetch_factor=2 if num_workers > 0 else None  # Prefetch 2 batches per worker
         )
     
     return train_loader, val_loader

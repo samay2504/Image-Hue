@@ -32,6 +32,10 @@ from src.utils.memory import (
     get_gpu_memory_info, clear_cuda_cache, estimate_safe_batch_size,
     reduce_batch_size, check_oom_risk, get_optimal_num_workers
 )
+from src.utils.device import (
+    get_device, enable_cuda_optimizations, auto_batch_and_workers,
+    get_dataloader_config, print_device_summary
+)
 
 
 class ColorIzationTrainer:
@@ -39,7 +43,12 @@ class ColorIzationTrainer:
     
     def __init__(self, config: Dict[str, Any]):
         self.config = config
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        
+        # Enable CUDA optimizations early
+        enable_cuda_optimizations()
+        
+        # Get device using our helper
+        self.device = get_device(prefer=config.get('device', 'cuda'))
         
         # Set up logging
         self.logger = Logger(config['log_dir'], name='train')
@@ -436,11 +445,21 @@ def main():
     if args.resume:
         config['resume_from'] = args.resume
     
-    # Auto-adjust batch size if needed
-    if config.get('auto_batch_size', False):
-        print("Auto-adjusting batch size based on available GPU memory...")
-        # This would require creating a dummy model first
-        # For now, use the config value
+    # Print device summary before training
+    print_device_summary()
+    
+    # Auto-configure batch size and num_workers if not specified
+    if 'batch_size' not in config or 'num_workers' not in config:
+        print("\nAuto-configuring DataLoader settings for your hardware...")
+        auto_batch, auto_workers = auto_batch_and_workers(
+            image_size=config.get('image_size', 256)
+        )
+        if 'batch_size' not in config:
+            config['batch_size'] = auto_batch
+            print(f"  Using auto-detected batch_size: {auto_batch}")
+        if 'num_workers' not in config:
+            config['num_workers'] = auto_workers
+            print(f"  Using auto-detected num_workers: {auto_workers}")
     
     # Create data loaders
     train_loader, val_loader = create_data_loaders(
