@@ -67,7 +67,10 @@ class ColorIzationTrainer:
         
         # Set up mixed precision training
         self.use_amp = config.get('use_amp', True) and self.device.type == 'cuda'
+        # self.scaler = GradScaler() if self.use_amp else None
+        from torch.cuda.amp import GradScaler, autocast
         self.scaler = GradScaler() if self.use_amp else None
+
         if self.use_amp:
             self.logger.info("Using automatic mixed precision (FP16)")
         
@@ -183,15 +186,34 @@ class ColorIzationTrainer:
         """Train for one epoch."""
         self.model.train()
         self.metrics.reset()
-        
+
+        # for step, (L, target) in enumerate(pbar):
+        #     if step == 0:  # First step of first epoch
+        #         print(f"L device: {L.device}")
+        #         print(f"target device: {target.device}")
+        #         print(f"Model device: {next(self.model.parameters()).device}")
+        #         print(f"GPU memory after data load: {torch.cuda.memory_allocated() / 1024**3:.2f}GB")
+
         pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{self.config['num_epochs']}")
         
         for batch_idx, (L, ab, target) in enumerate(pbar):
             try:
-                L = L.to(self.device)
-                target = target.to(self.device)
+                # L = L.to(self.device)
+                L = L.to(self.device, non_blocking=True)
+                target = target.to(self.device, non_blocking=True)
+                # target = target.to(self.device)
+                if batch_idx == 0 and epoch == 0:
+                    print(f"L device: {L.device}")
+                    print(f"target device: {target.device}")
+                    print(f"Model device: {next(self.model.parameters()).device}")
+                    torch.cuda.synchronize()
+                    print(
+                        f"GPU memory allocated: {torch.cuda.memory_allocated() / 1024**3:.2f} GB, "
+                        f"reserved: {torch.cuda.memory_reserved() / 1024**3:.2f} GB"
+                    )
                 
                 # Forward pass with automatic mixed precision
+                # 
                 with autocast(enabled=self.use_amp):
                     logits = self.model(L)
                     loss = self._compute_loss(logits, target)
@@ -397,6 +419,8 @@ class ColorIzationTrainer:
 
 
 def main():
+    from src.models import ops
+    ops.reset_ab_grid_cache()
     parser = argparse.ArgumentParser(description='Train colorization model')
     parser.add_argument('--config', type=str, required=True, help='Path to config file')
     parser.add_argument('--train_dir', type=str, required=True, help='Training data directory')

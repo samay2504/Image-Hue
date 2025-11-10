@@ -14,7 +14,9 @@ from typing import Tuple, Optional, List
 import torch
 import torch.nn.functional as F
 from scipy.ndimage import gaussian_filter
-
+from tqdm import tqdm
+from concurrent.futures import ProcessPoolExecutor, as_completed, ThreadPoolExecutor
+from functools import partial
 
 # Constants from paper
 GRID_SIZE = 10  # Quantization grid size
@@ -40,23 +42,32 @@ def get_ab_quantization_grid(grid_size: int = GRID_SIZE) -> np.ndarray:
     
     # Filter to in-gamut colors (those that can be represented in RGB)
     # Use multiple L values to ensure color is representable
+    # in_gamut = []
+    # for ab in ab_grid:
+    #     # Test with L=50 (mid-lightness) - this is standard
+    #     lab = np.array([50.0, ab[0], ab[1]])
+    #     rgb = lab_to_rgb_single(lab)
+    #     # Must be in valid RGB range [0, 1] with small tolerance
+    #     if np.all(rgb >= 0.0) and np.all(rgb <= 1.0):
+    #         in_gamut.append(ab)
     in_gamut = []
     for ab in ab_grid:
-        # Test with L=50 (mid-lightness) - this is standard
         lab = np.array([50.0, ab[0], ab[1]])
-        rgb = lab_to_rgb_single(lab)
-        # Must be in valid RGB range [0, 1] with small tolerance
-        if np.all(rgb >= 0.0) and np.all(rgb <= 1.0):
+        if is_color_in_gamut(lab, tolerance=0.3):
             in_gamut.append(ab)
-    
+    if len(in_gamut) != 313:
+        print(f"Warning: Got {len(in_gamut)} bins, forcing to 313")
+        # Sort by distance from origin and take first 313
+        ab_array = np.array(in_gamut)
+        distances = np.sqrt(ab_array[:, 0]**2 + ab_array[:, 1]**2)
+        sorted_indices = np.argsort(distances)
+        in_gamut = ab_array[sorted_indices[:313]].tolist()
+
     ab_grid_filtered = np.array(in_gamut)
     
     # Paper reports Q=313 bins for grid_size=10
     return ab_grid_filtered.astype(np.float32)
     
-    # Paper reports Q=313 bins for grid_size=10
-    return ab_grid_filtered.astype(np.float32)
-
 
 # Pre-compute and cache the quantization grid
 _AB_GRID_CACHE: Optional[np.ndarray] = None
@@ -150,10 +161,17 @@ def lab_to_rgb(lab: np.ndarray) -> np.ndarray:
     ]).T)
     
     # Apply sRGB companding
-    mask = rgb_linear > 0.0031308
-    rgb = np.where(mask, 1.055 * np.power(rgb_linear, 1/2.4) - 0.055, 12.92 * rgb_linear)
+    # mask = rgb_linear > 0.0031308
+    # rgb = np.where(mask, 1.055 * np.power(np.maximum(rgb_linear, 0), 1/2.4) - 0.055, 12.92 * rgb_linear)
     
-    rgb = np.clip(rgb, 0, 1)
+    # rgb = np.clip(rgb, 0, 1)
+    # return rgb.astype(np.float32)
+    mask = rgb_linear > 0.0031308
+    rgb = np.where(mask, 1.055 * np.power(np.maximum(rgb_linear, 0), 1/2.4) - 0.055, 12.92 * rgb_linear)
+
+    # Check if in gamut BEFORE clipping (this is what the filter should see)
+    # For filtering purposes, we don't clip - let the filter see the real out-of-gamut values
+    # But for actual use, we do clip
     return rgb.astype(np.float32)
 
 
@@ -162,7 +180,42 @@ def lab_to_rgb_single(lab: np.ndarray) -> np.ndarray:
     lab_img = lab.reshape(1, 1, 3)
     rgb_img = lab_to_rgb(lab_img)
     return rgb_img[0, 0]
-
+def is_color_in_gamut(lab: np.ndarray, tolerance: float = 0.01) -> bool:
+    """
+    Check if a Lab color is within the sRGB gamut.
+    
+    Args:
+        lab: (3,) array [L, a, b]
+        tolerance: Allowed overshoot/undershoot
+        
+    Returns:
+        True if color is in gamut, False otherwise
+    """
+    # Convert Lab to XYZ
+    L, a, b = lab
+    fy = (L + 16) / 116
+    fx = a / 500 + fy
+    fz = fy - b / 200
+    xyz_f = np.array([fx, fy, fz])
+    
+    # Inverse transform
+    mask = xyz_f > 0.206893
+    xyz = np.where(mask, xyz_f ** 3, (xyz_f - 16/116) / 7.787)
+    xyz = xyz * np.array([95.047, 100.0, 108.883]) / 100
+    
+    # XYZ to RGB linear
+    rgb_linear = np.dot(xyz, np.array([
+        [3.2404542, -1.5371385, -0.4985314],
+        [-0.9692660, 1.8760108, 0.0415560],
+        [0.0556434, -0.2040259, 1.0572252]
+    ]))
+    
+    # Check if in gamut (before any clipping or NaN handling)
+    if np.any(np.isnan(rgb_linear)) or np.any(np.isinf(rgb_linear)):
+        return False
+    
+    # Allow small tolerance for floating point errors
+    return np.all(rgb_linear >= -tolerance) and np.all(rgb_linear <= 1.0 + tolerance)
 
 def encode_ab_to_distribution(ab: np.ndarray, ab_grid: Optional[np.ndarray] = None,
                                 sigma: float = SIGMA_SOFT, k: int = K_NEIGHBORS) -> np.ndarray:
@@ -303,12 +356,191 @@ def compute_class_rebalancing_weights(empirical_distribution: np.ndarray,
     
     return weights.astype(np.float32)
 
+def _process_single_image(img_path: str, ab_grid: np.ndarray) -> Optional[np.ndarray]:
+    """
+    Helper function to process a single image and return its histogram.
+    This is separated out for parallel processing.
+    """
+    try:
+        from PIL import Image
+        # Load and convert to Lab
+        img = Image.open(img_path).convert('RGB')
+        img = np.array(img) / 255.0
+        lab = rgb_to_lab(img)
+        ab = lab[:, :, 1:]  # (H, W, 2)
+        
+        # Quantize to nearest bin
+        ab_flat = ab.reshape(-1, 2)
+        distances = np.sqrt(np.sum((ab_flat[:, np.newaxis, :] - ab_grid[np.newaxis, :, :]) ** 2, axis=2))
+        nearest_bins = np.argmin(distances, axis=1)
+        
+        # Compute histogram
+        Q = len(ab_grid)
+        hist, _ = np.histogram(nearest_bins, bins=np.arange(Q + 1))
+        return hist
+        
+    except Exception as e:
+        print(f"Warning: Failed to process {img_path}: {e}")
+        return None
 
+
+
+#GPU TRIAL  
+def rgb_to_lab_torch(rgb: torch.Tensor) -> torch.Tensor:
+    """
+    Convert RGB to Lab color space (GPU version).
+    
+    Args:
+        rgb: (H, W, 3) or (B, H, W, 3) tensor in [0, 1]
+        
+    Returns:
+        lab: (H, W, 3) or (B, H, W, 3) tensor
+    """
+    # XYZ conversion matrix
+    rgb_to_xyz = torch.tensor([
+        [0.4124564, 0.3575761, 0.1804375],
+        [0.2126729, 0.7151522, 0.0721750],
+        [0.0193339, 0.1191920, 0.9503041]
+    ], dtype=rgb.dtype, device=rgb.device)
+    
+    # Linearize RGB
+    mask = rgb > 0.04045
+    rgb_linear = torch.where(mask, 
+                             torch.pow((rgb + 0.055) / 1.055, 2.4),
+                             rgb / 12.92)
+    
+    # Convert to XYZ
+    xyz = torch.matmul(rgb_linear, rgb_to_xyz.T)
+    
+    # Normalize by D65 white point
+    xyz = xyz / torch.tensor([0.95047, 1.0, 1.08883], 
+                             dtype=xyz.dtype, device=xyz.device)
+    
+    # XYZ to Lab
+    epsilon = 0.008856
+    kappa = 903.3
+    
+    mask = xyz > epsilon
+    f = torch.where(mask, torch.pow(xyz, 1/3), (kappa * xyz + 16) / 116)
+    
+    L = 116 * f[..., 1] - 16
+    a = 500 * (f[..., 0] - f[..., 1])
+    b = 200 * (f[..., 1] - f[..., 2])
+    
+    return torch.stack([L, a, b], dim=-1)
+
+#gpu trial
+def compute_empirical_distribution_from_images_gpu(
+    image_paths: List[str],
+    ab_grid: Optional[np.ndarray] = None,
+    max_images: int = 10000,
+    batch_size: int = 32,
+    device: str = 'cuda'
+) -> np.ndarray:
+    """
+    GPU-accelerated color statistics computation.
+    
+    Args:
+        image_paths: List of paths to color images
+        ab_grid: (Q, 2) array of ab bin centers
+        max_images: Maximum number of images to process
+        batch_size: Number of images to process in parallel on GPU
+        device: 'cuda' or 'cpu'
+        
+    Returns:
+        empirical_dist: (Q,) array of color frequencies
+    """
+    from PIL import Image
+    import torch
+    
+    if not torch.cuda.is_available() and device == 'cuda':
+        print("CUDA not available, falling back to CPU")
+        device = 'cpu'
+    
+    if ab_grid is None:
+        ab_grid = get_ab_grid()
+    
+    # Move ab_grid to GPU
+    ab_grid_torch = torch.from_numpy(ab_grid).float().to(device)  # (Q, 2)
+    Q = len(ab_grid)
+    
+    empirical_dist = np.zeros(Q, dtype=np.float64)
+    image_paths = image_paths[:max_images]
+    
+    print(f"Processing on {device.upper()} with batch_size={batch_size}")
+    
+    # Process in batches
+    for batch_start in tqdm(range(0, len(image_paths), batch_size),
+                           desc="Processing batches", unit="batch"):
+        batch_paths = image_paths[batch_start:batch_start + batch_size]
+        batch_images = []
+        
+        # Load batch of images (CPU)
+        for img_path in batch_paths:
+            try:
+                img = Image.open(img_path).convert('RGB')
+                # Resize to reduce memory
+                img.thumbnail((256, 256), Image.LANCZOS)
+                img_array = np.array(img) / 255.0
+                batch_images.append(img_array)
+            except:
+                continue
+        
+        if not batch_images:
+            continue
+        
+        # Stack into batch tensor and move to GPU
+        # Pad to same size if needed
+        max_h = max(img.shape[0] for img in batch_images)
+        max_w = max(img.shape[1] for img in batch_images)
+        
+        batch_tensor = []
+        for img in batch_images:
+            h, w = img.shape[:2]
+            if h != max_h or w != max_w:
+                # Pad
+                padded = np.zeros((max_h, max_w, 3))
+                padded[:h, :w] = img
+                batch_tensor.append(padded)
+            else:
+                batch_tensor.append(img)
+        
+        batch_tensor = torch.from_numpy(np.array(batch_tensor)).float().to(device)
+        # batch_tensor: (B, H, W, 3)
+        
+        # Convert to Lab on GPU
+        with torch.no_grad():
+            lab = rgb_to_lab_torch(batch_tensor)  # (B, H, W, 3)
+            ab = lab[..., 1:]  # (B, H, W, 2)
+            
+            # Flatten spatial dimensions
+            B, H, W, _ = ab.shape
+            ab_flat = ab.reshape(B * H * W, 2)  # (N, 2)
+            
+            # Compute distances to all bins - THIS IS THE GPU WIN
+            # ab_flat: (N, 2), ab_grid_torch: (Q, 2)
+            # distances: (N, Q)
+            distances = torch.cdist(ab_flat, ab_grid_torch)  # Efficient pairwise distances
+            nearest_bins = torch.argmin(distances, dim=1)  # (N,)
+            
+            # Compute histogram on GPU
+            hist = torch.histc(nearest_bins.float(), bins=Q, min=0, max=Q-1)
+            
+            # Move back to CPU
+            empirical_dist += hist.cpu().numpy()
+    
+    return empirical_dist.astype(np.float32)
+
+
+
+
+#tested to beginningt, cpu usage
 def compute_empirical_distribution_from_images(image_paths: List[str],
                                                  ab_grid: Optional[np.ndarray] = None,
                                                  max_images: int = 10000) -> np.ndarray:
     """
     Compute empirical color distribution from a dataset of images.
+    Memory-efficient sequential processing.
     
     Args:
         image_paths: List of paths to color images
@@ -325,31 +557,146 @@ def compute_empirical_distribution_from_images(image_paths: List[str],
     
     Q = len(ab_grid)
     empirical_dist = np.zeros(Q, dtype=np.float64)
-    
     image_paths = image_paths[:max_images]
     
-    for img_path in image_paths:
+    for img_path in tqdm(image_paths, desc="Processing images", unit="img"):
         try:
             # Load and convert to Lab
             img = Image.open(img_path).convert('RGB')
+            
+            # MEMORY FIX: Resize large images to max 512x512
+            if max(img.size) > 512:
+                img.thumbnail((512, 512), Image.LANCZOS)
+            
             img = np.array(img) / 255.0
             lab = rgb_to_lab(img)
             ab = lab[:, :, 1:]  # (H, W, 2)
             
-            # Quantize to nearest bin
-            ab_flat = ab.reshape(-1, 2)
-            distances = np.sqrt(np.sum((ab_flat[:, np.newaxis, :] - ab_grid[np.newaxis, :, :]) ** 2, axis=2))
-            nearest_bins = np.argmin(distances, axis=1)
+            # Quantize to nearest bin - MEMORY EFFICIENT VERSION
+            ab_flat = ab.reshape(-1, 2)  # (N, 2)
+            
+            # Process in chunks to avoid memory explosion
+            chunk_size = 10000
+            nearest_bins = np.zeros(len(ab_flat), dtype=np.int32)
+            
+            for i in range(0, len(ab_flat), chunk_size):
+                chunk = ab_flat[i:i+chunk_size]
+                # Compute distances for this chunk only
+                distances = np.sqrt(np.sum((chunk[:, np.newaxis, :] - ab_grid[np.newaxis, :, :]) ** 2, axis=2))
+                nearest_bins[i:i+chunk_size] = np.argmin(distances, axis=1)
             
             # Accumulate histogram
             hist, _ = np.histogram(nearest_bins, bins=np.arange(Q + 1))
             empirical_dist += hist
             
         except Exception as e:
-            print(f"Warning: Failed to process {img_path}: {e}")
+            # Silently skip failed images to keep progress bar clean
             continue
     
     return empirical_dist.astype(np.float32)
+
+
+
+#this function worked but then stopped at 15 percent
+# def compute_empirical_distribution_from_images(image_paths: List[str],
+#                                                  ab_grid: Optional[np.ndarray] = None,
+#                                                  max_images: int = 10000,
+#                                                  num_workers: Optional[int] = None) -> np.ndarray:
+#     """
+#     Compute empirical color distribution from a dataset of images.
+    
+#     Args:
+#         image_paths: List of paths to color images
+#         ab_grid: (Q, 2) array of ab bin centers
+#         max_images: Maximum number of images to process
+#         num_workers: Number of parallel workers (None = auto-detect CPU count)
+        
+#     Returns:
+#         empirical_dist: (Q,) array of color frequencies
+#     """
+#     import os
+    
+#     if ab_grid is None:
+#         ab_grid = get_ab_grid()
+    
+#     Q = len(ab_grid)
+#     empirical_dist = np.zeros(Q, dtype=np.float64)
+    
+#     image_paths = image_paths[:max_images]
+    
+#     # Auto-detect CPU count if not specified
+#     if num_workers is None:
+#         num_workers = min(os.cpu_count() or 1, len(image_paths))
+    
+#     print(f"Processing {len(image_paths)} images using {num_workers} workers...")
+    
+#     # Create partial function with ab_grid pre-filled
+#     process_func = partial(_process_single_image, ab_grid=ab_grid)
+    
+#     # Use ProcessPoolExecutor for true parallelism (GIL-free)
+#     with ProcessPoolExecutor(max_workers=num_workers) as executor:
+#         # Submit all jobs
+#         futures = {executor.submit(process_func, img_path): img_path 
+#                    for img_path in image_paths}
+        
+#         # Process results as they complete with progress bar
+#         for future in tqdm(as_completed(futures), total=len(image_paths), 
+#                           desc="Processing images", unit="img"):
+#             hist = future.result()
+#             if hist is not None:
+#                 empirical_dist += hist
+    
+#     return empirical_dist.astype(np.float32)
+
+
+
+#original function
+# def compute_empirical_distribution_from_images(image_paths: List[str],
+#                                                  ab_grid: Optional[np.ndarray] = None,
+#                                                  max_images: int = 10000) -> np.ndarray:
+#     """
+#     Compute empirical color distribution from a dataset of images.
+    
+#     Args:
+#         image_paths: List of paths to color images
+#         ab_grid: (Q, 2) array of ab bin centers
+#         max_images: Maximum number of images to process
+        
+#     Returns:
+#         empirical_dist: (Q,) array of color frequencies
+#     """
+#     from PIL import Image
+    
+#     if ab_grid is None:
+#         ab_grid = get_ab_grid()
+    
+#     Q = len(ab_grid)
+#     empirical_dist = np.zeros(Q, dtype=np.float64)
+    
+#     image_paths = image_paths[:max_images]
+    
+#     for img_path in tqdm(image_paths, desc="Processing images", unit="img"):
+#         try:
+#             # Load and convert to Lab
+#             img = Image.open(img_path).convert('RGB')
+#             img = np.array(img) / 255.0
+#             lab = rgb_to_lab(img)
+#             ab = lab[:, :, 1:]  # (H, W, 2)
+            
+#             # Quantize to nearest bin
+#             ab_flat = ab.reshape(-1, 2)
+#             distances = np.sqrt(np.sum((ab_flat[:, np.newaxis, :] - ab_grid[np.newaxis, :, :]) ** 2, axis=2))
+#             nearest_bins = np.argmin(distances, axis=1)
+            
+#             # Accumulate histogram
+#             hist, _ = np.histogram(nearest_bins, bins=np.arange(Q + 1))
+#             empirical_dist += hist
+            
+#         except Exception as e:
+#             print(f"Warning: Failed to process {img_path}: {e}")
+#             continue
+    
+#     return empirical_dist.astype(np.float32)
 
 
 def ab_to_bin_indices(ab: np.ndarray, ab_grid: Optional[np.ndarray] = None) -> np.ndarray:

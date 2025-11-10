@@ -1,7 +1,7 @@
 """
 Dataset classes for colorization training and evaluation.
 """
-
+import torch
 import os
 from pathlib import Path
 from typing import Optional, Callable, List, Tuple
@@ -187,6 +187,8 @@ def create_data_loaders(train_dir: str, val_dir: Optional[str] = None,
         num_workers=num_workers,
         pin_memory=True,
         drop_last=True
+        # persistent_workers=True,
+        # prefetch_factor=4
     )
     
     # Validation dataset
@@ -205,6 +207,8 @@ def create_data_loaders(train_dir: str, val_dir: Optional[str] = None,
             num_workers=num_workers,
             pin_memory=True,
             drop_last=False
+            # persistent_workers=True,
+            # prefetch_factor=4
         )
     
     return train_loader, val_loader
@@ -220,7 +224,7 @@ def compute_dataset_color_statistics(data_dir: str, output_file: str,
         output_file: Path to save statistics (numpy .npz file)
         max_images: Maximum number of images to process
     """
-    from src.models.ops import compute_empirical_distribution_from_images, get_ab_grid
+    from src.models.ops import compute_empirical_distribution_from_images, compute_empirical_distribution_from_images_gpu, get_ab_grid
     
     # Ensure output directory exists
     output_path = Path(output_file)
@@ -253,6 +257,22 @@ def compute_dataset_color_statistics(data_dir: str, output_file: str,
     
     # Compute empirical distribution
     empirical_dist = compute_empirical_distribution_from_images(image_paths)
+    # In compute_dataset_color_statistics function (around line 255)
+
+# # Check if GPU is available
+#     use_gpu = torch.cuda.is_available()
+
+#     if use_gpu:
+#         print("GPU detected! Using GPU-accelerated processing...")
+#         empirical_dist = compute_empirical_distribution_from_images_gpu(
+#             image_paths,
+#             batch_size=32,  # Adjust based on GPU memory
+#             device='cuda'
+#         )
+#     else:
+#         print("GPU not available, using CPU...")
+#         empirical_dist = compute_empirical_distribution_from_images(image_paths)
+
     
     # Compute rebalancing weights
     from src.models.ops import compute_class_rebalancing_weights
