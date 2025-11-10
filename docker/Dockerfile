@@ -1,9 +1,13 @@
-FROM nvidia/cuda:13.0.0-cudnn8-runtime-ubuntu22.04
+# Base image: CUDA 12.8 + cuDNN 9 + Ubuntu 22.04
+# Compatible with RTX 5070 Ti and PyTorch cu128 nightly builds
+FROM nvidia/cuda:12.8.0-cudnn9-runtime-ubuntu22.04
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV CUDA_HOME=/usr/local/cuda
+# RTX 5070 Ti (Blackwell) compute capability
+ENV TORCH_CUDA_ARCH_LIST="8.9;9.0"
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -33,8 +37,9 @@ WORKDIR /app
 # Copy requirements
 COPY ../requirements.txt /app/requirements.txt
 
-# Install PyTorch with CUDA 13.0 support
-RUN pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+# Install PyTorch cu128 nightly (for RTX 5070 Ti support)
+# See: https://pytorch.org/get-started/locally/
+RUN pip3 install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu128
 
 # Install other requirements
 RUN pip install --no-cache-dir -r requirements.txt

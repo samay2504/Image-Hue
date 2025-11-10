@@ -18,6 +18,8 @@ services:
       retries: 3
 
   # Colorization app (Streamlit)
+  # Requires: nvidia-container-toolkit installed
+  # Test: docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu22.04 nvidia-smi
   app-streamlit:
     build:
       context: ..
@@ -30,9 +32,13 @@ services:
       - ../cache:/app/cache
       - ../logs:/app/logs
       - ../examples:/app/examples
+      # Mount HuggingFace cache to avoid re-downloading models
+      - ~/.cache/huggingface:/root/.cache/huggingface
     environment:
       - REDIS_URL=redis://redis:6379
       - CUDA_VISIBLE_DEVICES=0
+      # Enable cuDNN benchmark for faster training
+      - TORCH_CUDNN_BENCHMARK=1
     depends_on:
       redis:
         condition: service_healthy
@@ -47,6 +53,7 @@ services:
               capabilities: [gpu]
 
   # Colorization app (Gradio)
+  # Requires: nvidia-container-toolkit installed
   app-gradio:
     build:
       context: ..
@@ -59,9 +66,13 @@ services:
       - ../cache:/app/cache
       - ../logs:/app/logs
       - ../examples:/app/examples
+      # Mount HuggingFace cache to avoid re-downloading models
+      - ~/.cache/huggingface:/root/.cache/huggingface
     environment:
       - REDIS_URL=redis://redis:6379
       - CUDA_VISIBLE_DEVICES=0
+      # Enable cuDNN benchmark for faster training
+      - TORCH_CUDNN_BENCHMARK=1
     depends_on:
       redis:
         condition: service_healthy
