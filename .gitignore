@@ -54,7 +54,11 @@ cache/
 *.cache
 
 # Data
-data/
+data/train/
+data/val/
+data/val_colorized/
+!data/color_stats.npz
+!data/README.md
 datasets/
 *.jpg
 *.jpeg
