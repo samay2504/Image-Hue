@@ -77,7 +77,7 @@ class ColorIzationTrainer:
         
         # Set up mixed precision training
         self.use_amp = config.get('use_amp', True) and self.device.type == 'cuda'
-        self.scaler = GradScaler('cuda') if self.use_amp else None
+        self.scaler = GradScaler() if self.use_amp else None
 
         if self.use_amp:
             self.logger.info("Using automatic mixed precision (FP16)")
@@ -221,7 +221,7 @@ class ColorIzationTrainer:
                     )
                 
                 # Forward pass with automatic mixed precision
-                with autocast('cuda', enabled=self.use_amp):
+                with autocast(device_type='cuda', enabled=self.use_amp):
                     logits = self.model(L)
                     loss = self._compute_loss(logits, target)
                 
@@ -286,7 +286,7 @@ class ColorIzationTrainer:
             L = L.to(self.device)
             target = target.to(self.device)
             
-            with autocast('cuda', enabled=self.use_amp):
+            with autocast(device_type='cuda', enabled=self.use_amp):
                 logits = self.model(L)
                 loss = self._compute_loss(logits, target)
             
