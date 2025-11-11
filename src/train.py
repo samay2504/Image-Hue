@@ -20,7 +20,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast
+from torch.cuda.amp import GradScaler
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -76,9 +77,7 @@ class ColorIzationTrainer:
         
         # Set up mixed precision training
         self.use_amp = config.get('use_amp', True) and self.device.type == 'cuda'
-        # self.scaler = GradScaler() if self.use_amp else None
-        from torch.cuda.amp import GradScaler, autocast
-        self.scaler = GradScaler() if self.use_amp else None
+        self.scaler = GradScaler('cuda') if self.use_amp else None
 
         if self.use_amp:
             self.logger.info("Using automatic mixed precision (FP16)")
@@ -222,8 +221,7 @@ class ColorIzationTrainer:
                     )
                 
                 # Forward pass with automatic mixed precision
-                # 
-                with autocast(enabled=self.use_amp):
+                with autocast('cuda', enabled=self.use_amp):
                     logits = self.model(L)
                     loss = self._compute_loss(logits, target)
                 
@@ -288,7 +286,7 @@ class ColorIzationTrainer:
             L = L.to(self.device)
             target = target.to(self.device)
             
-            with autocast(enabled=self.use_amp):
+            with autocast('cuda', enabled=self.use_amp):
                 logits = self.model(L)
                 loss = self._compute_loss(logits, target)
             
