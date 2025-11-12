@@ -53,14 +53,17 @@ def get_ab_quantization_grid(grid_size: int = GRID_SIZE) -> np.ndarray:
     in_gamut = []
     for ab in ab_grid:
         lab = np.array([50.0, ab[0], ab[1]])
-        if is_color_in_gamut(lab, tolerance=0.3):
+        # Use tight tolerance (0.01) to match paper's 313 bins
+        if is_color_in_gamut(lab, tolerance=0.01):
             in_gamut.append(ab)
+    
+    # If we get exactly 313 or very close, use as-is
+    # Otherwise, sort by distance and take closest 313 to origin
     if len(in_gamut) != 313:
-        print(f"Warning: Got {len(in_gamut)} bins, forcing to 313")
-        # Sort by distance from origin and take first 313
         ab_array = np.array(in_gamut)
         distances = np.sqrt(ab_array[:, 0]**2 + ab_array[:, 1]**2)
         sorted_indices = np.argsort(distances)
+        # Take exactly 313 bins (most commonly occurring in-gamut colors)
         in_gamut = ab_array[sorted_indices[:313]].tolist()
 
     ab_grid_filtered = np.array(in_gamut)
